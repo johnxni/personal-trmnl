@@ -10,4 +10,4 @@ Single Day screen
 
 No events for the given day
 
-![Screenshot](examples/screen_no_events.png)V
+![Screenshot](examples/screen_no_events.png)
