@@ -1,0 +1,34 @@
+<div class="layout layout--col">
+  <div class="title">Today 今天</div>  
+  <div class="title pb--8"> {{ today.date }}</div>
+  <div class="columns">
+    <div class="column">
+      <div class="list" data-list-limit="true" data-list-hidden-count="true" data-list-max-columns="1">
+        <div class="list">
+              {% for event in today.events %}
+                  <div>
+                      <div class="divider--h"></div>
+                      <div class="flex flex--row flex--left">
+                          <div class="bg--gray-75">
+                              <div class="value p--1">{{ event.start }}</div>
+                          </div>
+                          <div class="value stretch">{{ event.summary }}</div>
+                          <div class="description">{{ event.start }} - {{ event.end }}</div>
+                      </div>
+                      <div class="divider--h"></div>
+                  </div>
+              {% else %}
+                <div class="value text--center">
+                  No events today
+                </div>
+              {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="title_bar">
+  <span class="title"> {{ today.year }} </span>
+  <span class="instance"> 🔋 Battery {{ trmnl.device.percent_charged }}%</span>
+</div>

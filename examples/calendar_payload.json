@@ -1,0 +1,46 @@
+{
+  "today": {
+    "date": "Thursday, April 22",
+    "year": 2026,
+    "timezone": "US/Los_Angeles",
+    "events": [
+      {
+        "start": "10:00 AM",
+        "end": "11:00 AM",
+        "summary": "Team Meeting"
+      },
+      {
+        "start": "1:00 PM",
+        "end": "2:00 PM",
+        "summary": "Doctor's Appointment"
+      },
+      {
+        "start": "3:30 PM",
+        "end": "4:30 PM",
+        "summary": "Project Deadline"
+      }
+    ]
+  },
+  "tomorrow": {
+    "date": "Friday, April 23",
+    "year": 2026,
+    "timezone": "US/Los_Angeles",
+    "events": [
+      {
+        "start": "10:00 AM",
+        "end": "11:00 AM",
+        "summary": "Team Meeting"
+      },
+      {
+        "start": "1:00 PM",
+        "end": "2:00 PM",
+        "summary": "Doctor's Appointment"
+      },
+      {
+        "start": "3:30 PM",
+        "end": "4:30 PM",
+        "summary": "Project Deadline"
+      }
+    ]
+  }
+}
