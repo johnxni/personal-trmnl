@@ -63,12 +63,12 @@ def parse_events(ics_text):
     return events
 
 
-def parse_dt(val):
+def parse_dt(val, timezone):
     # example: 20260103T131500
-    return datetime.strptime(val, "%Y%m%dT%H%M%S").replace(tzinfo=ZoneInfo(DEFAULT_TIMEZONE))
+    return datetime.strptime(val, "%Y%m%dT%H%M%S").replace(tzinfo=ZoneInfo(timezone))
 
 
-def parse_webcal(calendar_url):
+def parse_webcal(calendar_url, display_timezone):
     """Read from an apple webcal and parse into JSON format.
 
     example event
@@ -93,32 +93,38 @@ def parse_webcal(calendar_url):
         event = {}
         keys = item.keys()
         start_key = [k for k in keys if k.startswith("DTSTART")][0]
+        start_tz = start_key.split("TZID=")[-1]
         end_key = [k for k in keys if k.startswith("DTEND")][0]
+        end_tz = end_key.split("TZID=")[-1]
+
         if "VALUE=DATE" in start_key or "VALUE=DATE" in end_key:
             logging.info("Skipping all-day event: %s", item["SUMMARY"])
             continue
 
-        event["start"] = parse_dt(item[start_key])
-        event["end"] = parse_dt(item[end_key])
+        event["start"] = parse_dt(item[start_key], start_tz).astimezone(ZoneInfo(display_timezone))
+        event["end"] = parse_dt(item[end_key], end_tz).astimezone(ZoneInfo(display_timezone))
         event["summary"] = item.get("SUMMARY", "No Summary")
+
+        if 'Test' in item['SUMMARY']:
+            print(item)
 
         events.append(event)
 
     return events
 
 
-def build_payload(keep_events, today_date, tomorrow_date):
+def build_payload(keep_events, today_date, tomorrow_date, display_timezone):
     payload = {
         "today": {
             "date": today_date.strftime("%A, %B %d"),
             "year": today_date.year,
-            "timezone": DEFAULT_TIMEZONE,
+            "timezone": display_timezone,
             "events": [],
         },
         "tomorrow": {
             "date": tomorrow_date.strftime("%A, %B %d"),
             "year": tomorrow_date.year,
-            "timezone": DEFAULT_TIMEZONE,
+            "timezone": display_timezone,
             "events": [],
         },
     }
@@ -176,21 +182,23 @@ def load_payload(filename="calendar_payload.json"):
         return {}
 
 
-def main(skip_keywords=None, dry_run=True, force_update=False):
-    today_date = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).date()
+def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, force_update=False):
+    today_date = datetime.now(ZoneInfo(display_timezone)).date()
     tomorrow_date = today_date + timedelta(days=1)
 
     config = load_config()
     keep_events = []
     for calendar_url in config["CALENDAR_URLS"]:
-        events = parse_webcal(calendar_url)
+        events = parse_webcal(calendar_url, display_timezone)
         for event in events:
+            if 'Test' in event['summary']:
+                print(event)
             if event["start"].date() in [today_date, tomorrow_date]:
                 keep_events.append(event)
 
     keep_events.sort(key=lambda e: e["start"])
 
-    payload = build_payload(keep_events, today_date, tomorrow_date)
+    payload = build_payload(keep_events, today_date, tomorrow_date, display_timezone)
 
     previous_payload = load_payload()
     if force_update or payload_checksum(payload) != payload_checksum(previous_payload):
@@ -210,6 +218,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force-update", action="store_true")
+    parser.add_argument('--display-timezone', type=str, default=DEFAULT_TIMEZONE)
     args = parser.parse_args()
 
-    main(dry_run=args.dry_run, force_update=args.force_update)
+    main(display_timezone=args.display_timezone, dry_run=args.dry_run, force_update=args.force_update)
