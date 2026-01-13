@@ -19,8 +19,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 
 def load_config():
-    config = {"WEBHOOK_URL": os.environ["TRMNL_WEBHOOK_URL"],
-              "CALENDAR_URLS": [url for url in os.environ["TRMNL_CALENDAR_URLS"].split(",") if url]}
+    config = {"WEBHOOK_URL": TRMNL_WEBHOOK_URL,
+              "CALENDAR_URLS": TRMNL_CALENDAR_URLS}
 
     return config
 
