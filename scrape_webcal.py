@@ -206,7 +206,8 @@ def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, fo
         if dry_run:
             logging.info("Dry run: not uploading. Payload: %s", json.dumps(payload, indent=2))
         else:
-            upload_calendar_json(payload, config["WEBHOOK_URL"])
+            for webhook_url in config["WEBHOOK_URLS"]:
+                upload_calendar_json(payload, webhook_url)
             save_payload(payload)
     else:
         logging.info("No changes detected; skipping upload.")
