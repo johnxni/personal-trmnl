@@ -8,12 +8,14 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from config import TRMNL_WEBHOOK_URL, TRMNL_CALENDAR_URLS
+
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 SKIP_KEYWORDS = ["#skip"]
 
 # Configure logging to show INFO messages
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 
 def load_config():
