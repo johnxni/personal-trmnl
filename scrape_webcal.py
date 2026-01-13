@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from config import TRMNL_WEBHOOK_URL, TRMNL_CALENDAR_URLS
+from config import TRMNL_WEBHOOK_URLS, TRMNL_CALENDAR_URLS
 
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 
@@ -19,8 +19,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 
 def load_config():
-    config = {"WEBHOOK_URL": TRMNL_WEBHOOK_URL,
-              "CALENDAR_URLS": TRMNL_CALENDAR_URLS}
+    config = {"TRMNL_WEBHOOK_URLS": TRMNL_WEBHOOK_URLS,
+              "TRMNL_CALENDAR_URLS": TRMNL_CALENDAR_URLS}
 
     return config
 
@@ -188,7 +188,7 @@ def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, fo
 
     config = load_config()
     keep_events = []
-    for calendar_url in config["CALENDAR_URLS"]:
+    for calendar_url in config["TRMNL_CALENDAR_URLS"]:
         events = parse_webcal(calendar_url, display_timezone)
         for event in events:
             if 'Test' in event['summary']:
@@ -206,7 +206,7 @@ def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, fo
         if dry_run:
             logging.info("Dry run: not uploading. Payload: %s", json.dumps(payload, indent=2))
         else:
-            for webhook_url in config["WEBHOOK_URLS"]:
+            for webhook_url in config["TRMNL_WEBHOOK_URLS"]:
                 upload_calendar_json(payload, webhook_url)
             save_payload(payload)
     else:
