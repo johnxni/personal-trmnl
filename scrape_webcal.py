@@ -7,8 +7,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
+from dateutil import rrule
 
-from config import TRMNL_WEBHOOK_URLS, TRMNL_CALENDAR_URLS
+from config import TRMNL_CALENDAR_URLS, TRMNL_WEBHOOK_URLS
 
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 
@@ -65,7 +66,10 @@ def parse_events(ics_text):
 
 def parse_dt(val, timezone):
     # example: 20260103T131500
-    return datetime.strptime(val, "%Y%m%dT%H%M%S").replace(tzinfo=ZoneInfo(timezone))
+    if val.endswith("Z"):
+        return datetime.strptime(val, "%Y%m%dT%H%M%SZ").replace(tzinfo=ZoneInfo("UTC"))
+    else:
+        return datetime.strptime(val, "%Y%m%dT%H%M%S").replace(tzinfo=ZoneInfo(timezone))
 
 
 def parse_webcal(calendar_url, display_timezone):
@@ -74,6 +78,7 @@ def parse_webcal(calendar_url, display_timezone):
     example event
     {'DTEND;TZID=America/Los_Angeles': '20260103T131500',
      'DTSTART;TZID=America/Los_Angeles': '20260103T123000',
+     'RRULE': 'FREQ=WEEKLY;UNTIL=20260130T075959Z',
      'UID': 'ASDF-AB9C-123E-1234-12FHIDAFH',
      'DTSTAMP': '20260103T200111Z',
      'X-APPLE-CREATOR-IDENTITY': 'com.apple.mobilecal',
@@ -105,12 +110,47 @@ def parse_webcal(calendar_url, display_timezone):
         event["end"] = parse_dt(item[end_key], end_tz).astimezone(ZoneInfo(display_timezone))
         event["summary"] = item.get("SUMMARY", "No Summary")
 
-        if 'Test' in item['SUMMARY']:
-            print(item)
+        if "RRULE" in item:
+            event["RRULE"] = item["RRULE"]
+            event["UID"] = item["UID"]
 
         events.append(event)
 
     return events
+
+
+def parse_rrule(rrule_string, dtstart=None):
+    parts = rrule_string.split(";")
+    has_until = any(p.upper().startswith("UNTIL=") for p in parts)
+    has_count = any(p.upper().startswith("COUNT=") for p in parts)
+
+    if has_until and has_count:
+        logging.warning("RRULE has both UNTIL and COUNT. Ignoring COUNT.")
+        parts = [p for p in parts if not p.upper().startswith("COUNT=")]
+
+    sanitized = ";".join(parts)
+    return rrule.rrulestr(sanitized, dtstart=dtstart)
+
+
+
+def expand_recurring_events(events, max_expand_window=365):
+    expanded_events = []
+    for event in events:
+        if "RRULE" not in event:
+            expanded_events.append(event)
+            continue
+
+        rrule_obj = parse_rrule(event["RRULE"], event["start"])
+        max_end = event["start"] + timedelta(days=max_expand_window)
+        for occurrence in rrule_obj.between(event["start"], max_end, inc=True):
+            new_event = {
+                "start": occurrence,
+                "end": occurrence + (event["end"] - event["start"]),
+                "summary": event["summary"],
+            }
+            expanded_events.append(new_event)
+
+    return expanded_events
 
 
 def build_payload(keep_events, today_date, tomorrow_date, display_timezone):
@@ -183,18 +223,26 @@ def load_payload(filename="calendar_payload.json"):
 
 
 def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, force_update=False):
+    if skip_keywords is None:
+        skip_keywords = SKIP_KEYWORDS
+
     today_date = datetime.now(ZoneInfo(display_timezone)).date()
     tomorrow_date = today_date + timedelta(days=1)
 
     config = load_config()
-    keep_events = []
+    all_events = []
     for calendar_url in config["TRMNL_CALENDAR_URLS"]:
         events = parse_webcal(calendar_url, display_timezone)
-        for event in events:
-            if 'Test' in event['summary']:
-                print(event)
-            if event["start"].date() in [today_date, tomorrow_date]:
-                keep_events.append(event)
+        expanded_events = expand_recurring_events(events)
+        all_events.extend(expanded_events)
+    all_events.sort(key=lambda e: e["start"])
+
+    keep_events = []
+    for event in all_events:
+        if any(k in event["summary"] for k in skip_keywords):
+            continue
+        if event["start"].date() in [today_date, tomorrow_date]:
+            keep_events.append(event)
 
     keep_events.sort(key=lambda e: e["start"])
 
@@ -219,7 +267,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force-update", action="store_true")
-    parser.add_argument('--display-timezone', type=str, default=DEFAULT_TIMEZONE)
+    parser.add_argument("--display-timezone", type=str, default=DEFAULT_TIMEZONE)
     args = parser.parse_args()
 
     main(display_timezone=args.display_timezone, dry_run=args.dry_run, force_update=args.force_update)
