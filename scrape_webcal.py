@@ -103,16 +103,30 @@ def parse_webcal(calendar_url, display_timezone):
         end_tz = end_key.split("TZID=")[-1]
 
         if "VALUE=DATE" in start_key or "VALUE=DATE" in end_key:
-            logging.info("Skipping all-day event: %s", item["SUMMARY"])
+            logging.info("Skipping all-day event: %s", item.get("SUMMARY", ""))
+            continue
+
+        if item.get("STATUS", "").upper() == "CANCELLED":
+            logging.info("Skipping cancelled event: %s", item.get("SUMMARY", ""))
+            continue
+
+        if item.get("TRANSP", "").upper() == "TRANSPARENT":
+            logging.info("Skipping free/transparent event: %s", item.get("SUMMARY", ""))
             continue
 
         event["start"] = parse_dt(item[start_key], start_tz).astimezone(ZoneInfo(display_timezone))
         event["end"] = parse_dt(item[end_key], end_tz).astimezone(ZoneInfo(display_timezone))
         event["summary"] = item.get("SUMMARY", "No Summary")
+        event["UID"] = item.get("UID")
+
+        rec_keys = [k for k in keys if k.startswith("RECURRENCE-ID")]
+        if rec_keys:
+            rec_key = rec_keys[0]
+            rec_tz = rec_key.split("TZID=")[-1] if "TZID=" in rec_key else display_timezone
+            event["RECURRENCE-ID"] = parse_dt(item[rec_key], rec_tz).astimezone(ZoneInfo(display_timezone))
 
         if "RRULE" in item:
             event["RRULE"] = item["RRULE"]
-            event["UID"] = item["UID"]
 
         events.append(event)
 
@@ -134,6 +148,11 @@ def parse_rrule(rrule_string, dtstart=None):
 
 
 def expand_recurring_events(events, max_expand_window=365):
+    overrides = {}
+    for event in events:
+        if "RECURRENCE-ID" in event and event.get("UID"):
+            overrides.setdefault(event["UID"], set()).add(event["RECURRENCE-ID"])
+
     expanded_events = []
     for event in events:
         if "RRULE" not in event:
@@ -142,7 +161,10 @@ def expand_recurring_events(events, max_expand_window=365):
 
         rrule_obj = parse_rrule(event["RRULE"], event["start"])
         max_end = event["start"] + timedelta(days=max_expand_window)
+        skip_dts = overrides.get(event.get("UID"), set())
         for occurrence in rrule_obj.between(event["start"], max_end, inc=True):
+            if occurrence in skip_dts:
+                continue
             new_event = {
                 "start": occurrence,
                 "end": occurrence + (event["end"] - event["start"]),
@@ -207,7 +229,7 @@ def payload_checksum(payload):
 def save_payload(payload):
     filename = "calendar_payload.json"
     with open(filename, "w") as f:
-        json.dump(payload, f, indent=2)
+        json.dump(payload, f, indent=2, ensure_ascii=False)
     logging.info("Saved payload to %s", filename)
 
 
@@ -222,11 +244,14 @@ def load_payload(filename="calendar_payload.json"):
         return {}
 
 
-def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, force_update=False):
+def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, force_update=False, datestr=None):
     if skip_keywords is None:
         skip_keywords = SKIP_KEYWORDS
 
-    today_date = datetime.now(ZoneInfo(display_timezone)).date()
+    if datestr is None:
+        today_date = datetime.now(ZoneInfo(display_timezone)).date()
+    else:
+        today_date = datetime.strptime(datestr, "%Y%m%d").date()
     tomorrow_date = today_date + timedelta(days=1)
 
     config = load_config()
@@ -252,7 +277,7 @@ def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, fo
     if force_update or payload_checksum(payload) != payload_checksum(previous_payload):
         logging.info("Payload has changed.")
         if dry_run:
-            logging.info("Dry run: not uploading. Payload: %s", json.dumps(payload, indent=2))
+            logging.info("Dry run: not uploading. Payload: %s", json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             for webhook_url in config["TRMNL_WEBHOOK_URLS"]:
                 upload_calendar_json(payload, webhook_url)
@@ -268,6 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force-update", action="store_true")
     parser.add_argument("--display-timezone", type=str, default=DEFAULT_TIMEZONE)
+    parser.add_argument("--datestr", type=str, default=None, help="YYYYMMDD; overrides 'today'")
     args = parser.parse_args()
 
-    main(display_timezone=args.display_timezone, dry_run=args.dry_run, force_update=args.force_update)
+    main(display_timezone=args.display_timezone, dry_run=args.dry_run, force_update=args.force_update, datestr=args.datestr)
