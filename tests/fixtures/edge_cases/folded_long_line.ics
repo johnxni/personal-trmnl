@@ -1,0 +1,11 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//EN
+BEGIN:VEVENT
+UID:folded-001
+SUMMARY:This is a very long event summary that the producer has chosen
+  to fold across two physical lines per RFC 5545 section 3.1
+DTSTART;TZID=America/Los_Angeles:20260430T140000
+DTEND;TZID=America/Los_Angeles:20260430T150000
+END:VEVENT
+END:VCALENDAR

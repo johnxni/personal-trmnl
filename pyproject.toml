@@ -5,7 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "python-dateutil>=2.9.0.post0",
+    "icalendar>=7.1.0",
+    "recurring-ical-events>=3.8.2",
     "requests>=2.32.5",
 ]
 
@@ -15,5 +16,17 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "N", "I", "TD", "Q"]
 
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+multiline-quotes = "double"
+
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ['tests']

@@ -2,12 +2,12 @@ import argparse
 import hashlib
 import json
 import logging
-import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import recurring_ical_events
 import requests
-from dateutil import rrule
+from icalendar import Calendar
 
 from config import TRMNL_CALENDAR_URLS, TRMNL_WEBHOOK_URLS
 
@@ -36,143 +36,102 @@ def get_ics(url):
     return response.text
 
 
-def parse_events(ics_text):
-    events = []
-    current = {}
-    in_event = False
-
-    for line in ics_text.splitlines():
-        line = line.strip()
-
-        if line == "BEGIN:VEVENT":
-            in_event = True
-            current = {}
-            continue
-
-        if line == "END:VEVENT":
-            in_event = False
-            events.append(current)
-            continue
-
-        if not in_event:
-            continue
-
-        if ":" in line:
-            key, val = line.split(":", 1)
-            current[key] = val
-
-    return events
-
-
-def parse_dt(val, timezone):
-    # example: 20260103T131500
-    if val.endswith("Z"):
-        return datetime.strptime(val, "%Y%m%dT%H%M%SZ").replace(tzinfo=ZoneInfo("UTC"))
-    else:
-        return datetime.strptime(val, "%Y%m%dT%H%M%S").replace(tzinfo=ZoneInfo(timezone))
-
-
-def parse_webcal(calendar_url, display_timezone):
-    """Read from an apple webcal and parse into JSON format.
-
-    example event
-    {'DTEND;TZID=America/Los_Angeles': '20260103T131500',
-     'DTSTART;TZID=America/Los_Angeles': '20260103T123000',
-     'RRULE': 'FREQ=WEEKLY;UNTIL=20260130T075959Z',
-     'UID': 'ASDF-AB9C-123E-1234-12FHIDAFH',
-     'DTSTAMP': '20260103T200111Z',
-     'X-APPLE-CREATOR-IDENTITY': 'com.apple.mobilecal',
-     'URL;VALUE=URI': '',
-     'SEQUENCE': '0',
-     'SUMMARY': 'Example Sumary',
-     'LAST-MODIFIED': '20251229T022642Z',
-     'CREATED': '20251229T022642Z',
-     'X-APPLE-CREATOR-TEAM-IDENTITY': '0000000000'}
+def parse_ics_text(text: str, display_timezone: str, today_date, tomorrow_date) -> list[dict]:
     """
+    Parse iCalendar text into expanded events for the given day window.
 
-    text = get_ics(calendar_url)
-    data = parse_events(text)
+    Parameters
+    ----------
+    text : str
+        Raw iCalendar text.
+    display_timezone : str
+        IANA timezone name for output datetimes.
+    today_date : datetime.date
+        Inclusive start of the day window.
+    tomorrow_date : datetime.date
+        Inclusive end of the day window.
+
+    Returns
+    -------
+    list[dict]
+        List of events with keys ``start``, ``end``, ``summary``.
+    """
+    tz = ZoneInfo(display_timezone)
+    range_start = datetime.combine(today_date, datetime.min.time(), tzinfo=tz)
+    range_end = datetime.combine(tomorrow_date, datetime.max.time(), tzinfo=tz)
+
+    calendar = Calendar.from_ical(text)
+    expanded = recurring_ical_events.of(calendar).between(range_start, range_end)
 
     events = []
-    for item in data:
-        event = {}
-        keys = item.keys()
-        start_key = [k for k in keys if k.startswith("DTSTART")][0]
-        start_tz = start_key.split("TZID=")[-1]
-        end_key = [k for k in keys if k.startswith("DTEND")][0]
-        end_tz = end_key.split("TZID=")[-1]
-
-        if "VALUE=DATE" in start_key or "VALUE=DATE" in end_key:
-            logging.info("Skipping all-day event: %s", item.get("SUMMARY", ""))
+    for event in expanded:
+        if not _keep_event(event):
             continue
-
-        if item.get("STATUS", "").upper() == "CANCELLED":
-            logging.info("Skipping cancelled event: %s", item.get("SUMMARY", ""))
+        start = event['DTSTART'].dt
+        end = event['DTEND'].dt
+        # All-day events come back as date, not datetime - skip.
+        if not isinstance(start, datetime):
             continue
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=tz)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=tz)
+        events.append({
+            'start': start.astimezone(tz),
+            'end': end.astimezone(tz),
+            'summary': str(event.get('SUMMARY', 'No Summary')),
+        })
 
-        if item.get("TRANSP", "").upper() == "TRANSPARENT":
-            logging.info("Skipping free/transparent event: %s", item.get("SUMMARY", ""))
-            continue
-
-        event["start"] = parse_dt(item[start_key], start_tz).astimezone(ZoneInfo(display_timezone))
-        event["end"] = parse_dt(item[end_key], end_tz).astimezone(ZoneInfo(display_timezone))
-        event["summary"] = item.get("SUMMARY", "No Summary")
-        event["UID"] = item.get("UID")
-
-        rec_keys = [k for k in keys if k.startswith("RECURRENCE-ID")]
-        if rec_keys:
-            rec_key = rec_keys[0]
-            rec_tz = rec_key.split("TZID=")[-1] if "TZID=" in rec_key else display_timezone
-            event["RECURRENCE-ID"] = parse_dt(item[rec_key], rec_tz).astimezone(ZoneInfo(display_timezone))
-
-        if "RRULE" in item:
-            event["RRULE"] = item["RRULE"]
-
-        events.append(event)
-
+    events = [e for e in events if not any(k in e['summary'] for k in SKIP_KEYWORDS)]
+    events.sort(key=lambda e: e['start'])
     return events
 
 
-def parse_rrule(rrule_string, dtstart=None):
-    parts = rrule_string.split(";")
-    has_until = any(p.upper().startswith("UNTIL=") for p in parts)
-    has_count = any(p.upper().startswith("COUNT=") for p in parts)
+def _keep_event(event) -> bool:
+    """
+    Return whether an expanded VEVENT should be kept.
 
-    if has_until and has_count:
-        logging.warning("RRULE has both UNTIL and COUNT. Ignoring COUNT.")
-        parts = [p for p in parts if not p.upper().startswith("COUNT=")]
+    Parameters
+    ----------
+    event : icalendar.Event
+        Expanded VEVENT from ``recurring_ical_events``.
 
-    sanitized = ";".join(parts)
-    return rrule.rrulestr(sanitized, dtstart=dtstart)
+    Returns
+    -------
+    bool
+        ``True`` if the event is busy and not cancelled.
+    """
+    if str(event.get('TRANSP', '')).upper() == 'TRANSPARENT':
+        return False
+    # recurring-ical-events still returns occurrences with STATUS:CANCELLED
+    # (including overrides that cancel a recurring instance); suppress them here.
+    if str(event.get('STATUS', '')).upper() == 'CANCELLED':
+        return False
+    return True
 
 
+def parse_webcal(calendar_url: str, display_timezone: str, today_date, tomorrow_date) -> list[dict]:
+    """
+    Fetch and parse an iCalendar URL into expanded events.
 
-def expand_recurring_events(events, max_expand_window=365):
-    overrides = {}
-    for event in events:
-        if "RECURRENCE-ID" in event and event.get("UID"):
-            overrides.setdefault(event["UID"], set()).add(event["RECURRENCE-ID"])
+    Parameters
+    ----------
+    calendar_url : str
+        URL to the iCalendar feed (``webcal://`` or ``https://``).
+    display_timezone : str
+        IANA timezone name for output datetimes.
+    today_date : datetime.date
+        Inclusive start of the day window.
+    tomorrow_date : datetime.date
+        Inclusive end of the day window.
 
-    expanded_events = []
-    for event in events:
-        if "RRULE" not in event:
-            expanded_events.append(event)
-            continue
-
-        rrule_obj = parse_rrule(event["RRULE"], event["start"])
-        max_end = event["start"] + timedelta(days=max_expand_window)
-        skip_dts = overrides.get(event.get("UID"), set())
-        for occurrence in rrule_obj.between(event["start"], max_end, inc=True):
-            if occurrence in skip_dts:
-                continue
-            new_event = {
-                "start": occurrence,
-                "end": occurrence + (event["end"] - event["start"]),
-                "summary": event["summary"],
-            }
-            expanded_events.append(new_event)
-
-    return expanded_events
+    Returns
+    -------
+    list[dict]
+        List of events with keys ``start``, ``end``, ``summary``.
+    """
+    text = get_ics(calendar_url)
+    return parse_ics_text(text, display_timezone, today_date, tomorrow_date)
 
 
 def build_payload(keep_events, today_date, tomorrow_date, display_timezone):
@@ -244,10 +203,7 @@ def load_payload(filename="calendar_payload.json"):
         return {}
 
 
-def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, force_update=False, datestr=None):
-    if skip_keywords is None:
-        skip_keywords = SKIP_KEYWORDS
-
+def main(display_timezone=DEFAULT_TIMEZONE, dry_run=True, force_update=False, datestr=None):
     if datestr is None:
         today_date = datetime.now(ZoneInfo(display_timezone)).date()
     else:
@@ -257,18 +213,11 @@ def main(display_timezone=DEFAULT_TIMEZONE, skip_keywords=None, dry_run=True, fo
     config = load_config()
     all_events = []
     for calendar_url in config["TRMNL_CALENDAR_URLS"]:
-        events = parse_webcal(calendar_url, display_timezone)
-        expanded_events = expand_recurring_events(events)
-        all_events.extend(expanded_events)
+        events = parse_webcal(calendar_url, display_timezone, today_date, tomorrow_date)
+        all_events.extend(events)
     all_events.sort(key=lambda e: e["start"])
 
-    keep_events = []
-    for event in all_events:
-        if any(k in event["summary"] for k in skip_keywords):
-            continue
-        if event["start"].date() in [today_date, tomorrow_date]:
-            keep_events.append(event)
-
+    keep_events = [e for e in all_events if e["start"].date() in [today_date, tomorrow_date]]
     keep_events.sort(key=lambda e: e["start"])
 
     payload = build_payload(keep_events, today_date, tomorrow_date, display_timezone)

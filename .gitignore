@@ -13,3 +13,5 @@ wheels/
 
 # Git worktrees
 .worktrees/
+
+tests/fixtures/local/
